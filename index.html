@@ -202,8 +202,9 @@ button { font-family: inherit; cursor: pointer; }
 .tbl-wrap {
   border: 1px solid var(--border); border-radius: var(--r); background: var(--surface);
   max-height: 260px;
-  overflow-x: hidden; overflow-y: auto;
+  overflow-x: auto; overflow-y: auto;
 }
+.tbl-wrap table { min-width: 640px; }
 table { width: 100%; border-collapse: collapse; }
 thead tr { background: var(--surface-2); border-bottom: 1px solid var(--border); }
 thead th {
