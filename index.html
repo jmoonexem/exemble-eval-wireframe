@@ -964,11 +964,11 @@ td.mono { font-family: 'SF Mono','Fira Code',monospace; font-size: 11.5px; font-
       <div id="setupErr" style="display:none;font-size:12px;color:#EF4444"></div>
     </div>
     <div class="modal-ft">
-      <button class="btn btn-ghost" onclick="goBackToCreate()" style="margin-right:auto">
+      <button id="setupBackBtn" class="btn btn-ghost" onclick="goBackToCreate()" style="margin-right:auto">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>이전
       </button>
       <button class="btn btn-ghost" onclick="close_('modalSetup')">취소</button>
-      <button class="btn btn-primary" onclick="startEval()">평가 시작</button>
+      <button id="setupStartBtn" class="btn btn-primary" onclick="startEval()">평가 시작</button>
     </div>
   </div>
 </div>
@@ -1261,7 +1261,7 @@ function renderRight() {
 
     const actionBtns = isRunning
       ? `<button class="btn btn-ghost btn-sm" style="color:#EF4444" onclick="cancelRun(${ds.id})"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>평가 중단</button>`
-      : `<button class="btn btn-invis btn-sm btn-icon" title="편집"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+      : `<button class="btn btn-invis btn-sm btn-icon" title="편집" onclick="openEdit(${ds.id})"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
         <button class="btn btn-invis btn-sm btn-icon" title="삭제" style="color:#EF4444"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg></button>
         <button class="btn btn-ghost btn-sm"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>재평가</button>`;
 
@@ -2111,6 +2111,46 @@ function _step2Signature(ds) {
   });
 }
 
+function openEdit(dsId) {
+  const ds = DATASETS.find(d => d.id === dsId);
+  if (!ds) return;
+
+  _pendingDs = {
+    id: ds.id,
+    name: ds.name,
+    methods: [...ds.methods],
+    embModel: ds.embModel,
+    judgeLLM: ds.judgeLLM,
+    gevalCriteria: ds.gevalCriteria || null,
+    ragasMetrics: ds.ragasMetrics || null,
+    hasRagas: ds.methods.includes('RAGAS'),
+    hasGeval: ds.methods.includes('G-Eval'),
+    needsCtxInput: !!ds.needsCtxInput,
+    ctxMode: ds.ctxMode || null,
+    _isEdit: true,
+    _editDsId: ds.id,
+  };
+
+  const needsExp = _needsExpectedAnswer(_pendingDs);
+  const needsCtx = _pendingDs.needsCtxInput;
+
+  _savedStep2 = {
+    sig: _step2Signature(_pendingDs),
+    questions: ds.histories.map(h => {
+      const vals = [h.q || ''];
+      if (needsExp) vals.push(h.exp || '');
+      if (needsCtx) vals.push(h.ctx || '');
+      return vals;
+    }),
+    criteria: (ds.gevalCriteria || []).map(c => ({
+      name: c.name || '',
+      prompt: c.prompt || c.cot || '',
+    })),
+  };
+
+  openSetup();
+}
+
 function goBackToCreate() {
   // 현재 Step 2 상태 저장
   _savedStep2 = {
@@ -2244,6 +2284,13 @@ function openSetup() {
 
   _savedStep2 = null;
   updateSetupCount();
+
+  // 편집 모드 UI
+  const isEdit = !!(_pendingDs && _pendingDs._isEdit);
+  document.getElementById('setupBackBtn').style.display = isEdit ? 'none' : '';
+  document.getElementById('setupStartBtn').textContent  = isEdit ? '저장 및 재평가' : '평가 시작';
+  document.querySelector('#modalSetup .modal-hd h3').textContent = isEdit ? '데이터셋 수정' : '평가 데이터 설정';
+
   document.getElementById('modalSetup').classList.add('open');
 }
 
@@ -2328,6 +2375,71 @@ function startEval() {
     if (gevalErrEl) gevalErrEl.style.display = 'none';
   }
   errEl.style.display = 'none';
+
+  // ── 편집 모드: 기존 데이터셋 업데이트 ──
+  if (_pendingDs && _pendingDs._isEdit) {
+    const ds = DATASETS.find(d => d.id === _pendingDs._editDsId);
+    if (ds) {
+      const needsExp = _needsExpectedAnswer(_pendingDs);
+      const needsCtx = _pendingDs.needsCtxInput;
+
+      // 질문 데이터 업데이트
+      ds.histories = Array.from(rows).map(tr => {
+        const tas = tr.querySelectorAll('textarea');
+        return {
+          q:   tas[0]?.value || '',
+          exp: needsExp ? (tas[1]?.value || '') : '',
+          ctx: needsCtx ? (tas[needsExp ? 2 : 1]?.value || '') : '',
+          act: '', p: null, r: null, f1: null, ragas: null, fail: false,
+        };
+      }).filter(h => h.q.trim());
+
+      // G-Eval 기준 업데이트
+      if (_pendingDs.methods.includes('G-Eval')) {
+        ds.gevalCriteria = Array.from(
+          document.querySelectorAll('#gevalCriteriaList .crit-row')
+        ).map(row => ({
+          name:   row.querySelector('input[type=text]')?.value || '',
+          prompt: row.querySelector('textarea')?.value || '',
+          cot:    row.querySelector('textarea')?.value || '',
+        })).filter(c => c.name.trim());
+      }
+
+      ds.itemCount = ds.histories.length;
+      ds.status    = 'running';
+      ds.runAt     = '2026-07-14 (진행 중)';
+      ds.prevBert  = ds.bert;
+      ds.bert      = null;
+      ds.ragas     = null;
+
+      _pendingDs = null;
+      close_('modalSetup');
+      renderTable(DATASETS);
+      renderRight();
+
+      // 3초 후 평가 완료 시뮬레이션
+      setTimeout(() => {
+        const base = parseFloat((0.88 + Math.random() * 0.08).toFixed(2));
+        ds.status = 'success';
+        ds.runAt  = '2026-07-14 ' + new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+        ds.bert   = { f1: base, precision: parseFloat((base - 0.01).toFixed(2)), recall: parseFloat((base + 0.01).toFixed(2)) };
+        if (ds.methods.includes('RAGAS')) {
+          ds.ragas = parseFloat((0.74 + Math.random() * 0.12).toFixed(2));
+          ds.ragasDetail = { faithfulness: 0.82, answerRelevancy: 0.76, contextPrecision: 0.78, contextRecall: 0.75 };
+        }
+        ds.histories.forEach(h => {
+          h.act = h.q ? `${h.exp || h.q}에 대한 워크플로우 답변입니다.` : '';
+          h.p  = ds.bert.precision;
+          h.r  = ds.bert.recall;
+          h.f1 = ds.bert.f1;
+        });
+        renderTable(DATASETS);
+        renderRight();
+      }, 3000);
+    }
+    return;
+  }
+
   const newDs = {
     ..._pendingDs,
     status: 'running',
