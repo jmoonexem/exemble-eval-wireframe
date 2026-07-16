@@ -2353,6 +2353,7 @@ function updateSetupCount() {
 let _expandEl = null, _expandPlaceholder = null;
 
 function openExpand(sectionId, title) {
+  if (_expandEl) return;
   const el = document.getElementById(sectionId);
   if (!el) return;
   _expandEl = el;
